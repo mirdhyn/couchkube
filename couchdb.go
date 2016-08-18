@@ -7,7 +7,9 @@ import (
 	"github.com/patrickjuchli/couch"
 )
 
-func createDB(name string) error {
+// CreateDB creates a database on the couchdb container of the same label,
+// then set replication
+func CreateDB(name string) error {
 	log.Printf("Waiting for '%s' endpoint...", name)
 	for {
 		endpoint, err := GetService(name)
@@ -23,7 +25,7 @@ func createDB(name string) error {
 				}
 				log.Printf("database '%s' created", name)
 			}
-			setReplication(name, db)
+			SetReplication(name, db)
 			break
 		}
 		time.Sleep(1 * time.Second)
@@ -31,7 +33,8 @@ func createDB(name string) error {
 	return nil
 }
 
-func setReplication(name string, db *couch.Database) {
+// SetReplication creates continuous replication to all other CouchDB instances
+func SetReplication(name string, db *couch.Database) {
 	for _, service := range GetServicesName() {
 		if service != name {
 			endpoint, err := GetService(service)

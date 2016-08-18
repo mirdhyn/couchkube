@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -12,15 +14,16 @@ import (
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 )
 
+// Database struct for database creation request json decoding
 type Database struct {
 	Name *string `json:"name"`
 }
 
 var (
 	namespace         = "couchdb"
-	kubeHost          = "130.211.100.80"
+	kubeHost          = "localhost:8080"
 	kubeUser          = "admin"
-	kubePassword      = "u7M56qMNEWkWZts2"
+	kubePassword      = "admin"
 	couchdbUser       = "admin"
 	couchdbPassword   = "admin"
 	getServiceTimeout = 15
@@ -39,7 +42,7 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fail if db already exists (but with retrun code "200 OK")
+	// Fail if db already exists (but still return code "200 OK")
 	_, err = kube.Services(namespace).Get(*db.Name)
 	if err == nil {
 		w.Write([]byte("Database already exists"))
@@ -49,11 +52,11 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	// Create new deployemnt
 	err = CreateDeployment(db)
 	if err != nil {
-		log.Println("could not create deployment controller '%s': %s", *db.Name, err)
+		log.Printf("could not create deployment controller '%s': %s", *db.Name, err)
 	}
 	log.Printf("deployment controller '%s' created", *db.Name)
 
-	// Create new service
+	// Create new service (and return "201 Created" if successful)
 	err = CreateService(db)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -72,8 +75,12 @@ func getServiceHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 		return
 	}
+
+	// Loop until either the LoadBalancer endpoint has been assigned
+	// or timeout is exceeded
 	for i := 0; i <= getServiceTimeout; i++ {
 		endpoint, err := GetService(name)
+		// Return LoadBalancer endpoint if found
 		if err == nil && len(endpoint) > 0 {
 			w.Write([]byte(endpoint))
 			return
@@ -87,6 +94,38 @@ func getServiceHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 
+	// Setting-up environment variables
+	if envNamespace := os.Getenv("COUCHKUBE_NAMESPACE"); len(envNamespace) > 0 {
+		namespace = envNamespace
+	}
+
+	if envKubeHost := os.Getenv("COUCHKUBE_HOST"); len(envKubeHost) > 0 {
+		kubeHost = envKubeHost
+	}
+
+	if envKubeUser := os.Getenv("COUCHKUBE_USER"); len(envKubeUser) > 0 {
+		kubeUser = envKubeUser
+	}
+
+	if envKubePassword := os.Getenv("COUCHKUBE_PASSWORD"); len(envKubePassword) > 0 {
+		kubePassword = envKubePassword
+	}
+
+	if envCouchdbUser := os.Getenv("COUCHKUBE_COUCHDB_USER"); len(envCouchdbUser) > 0 {
+		couchdbUser = envCouchdbUser
+	}
+
+	if envCouchdbPassword := os.Getenv("COUCHKUBE_COUCHDB_PASSWORD"); len(envCouchdbPassword) > 0 {
+		couchdbPassword = envCouchdbPassword
+	}
+
+	if envTimeout := os.Getenv("COUCHKUBE_TIMEOUT"); len(envTimeout) > 0 {
+		if t, err := strconv.Atoi(envTimeout); err != nil {
+			getServiceTimeout = t
+		}
+	}
+
+	// Setting connection to Kubernetes
 	config := &restclient.Config{
 		Host:     kubeHost,
 		Username: kubeUser,
@@ -100,11 +139,16 @@ func main() {
 		log.Fatalf("could not connect to Kubernetes API: %s", err)
 	}
 
+	if err = CreateNamespace(); err != nil {
+		log.Fatalf("unable to create namespace '%s': %s", namespace, err)
+	}
+
+	// Routing
 	r := mux.NewRouter()
 	r.HandleFunc("/{name}", getServiceHandler).Methods("GET")
 	r.HandleFunc("/", createDatabaseHandler).Methods("POST")
 
-	log.Println("Starting...")
+	log.Println("Listening...")
 	log.Fatal(http.ListenAndServe(":8080", r))
 
 }

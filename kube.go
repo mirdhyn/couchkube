@@ -8,11 +8,8 @@ import (
 	"k8s.io/kubernetes/pkg/apis/extensions"
 )
 
-type Service struct {
-	Name     string
-	Endpoint string
-}
-
+// CreateDeployment takes a database name and create a K8S deployment
+// of klaemo/couchdb container with label "database:<name>""
 func CreateDeployment(db Database) (err error) {
 	name := *db.Name
 
@@ -63,6 +60,7 @@ func CreateDeployment(db Database) (err error) {
 
 }
 
+// CreateService takes a database name and create a K8S service with that name
 func CreateService(db Database) (err error) {
 	name := *db.Name
 	// Define service spec.
@@ -91,11 +89,12 @@ func CreateService(db Database) (err error) {
 		return fmt.Errorf("failed to create service '%s': %s", name, err)
 	}
 
-	go createDB(name)
+	go CreateDB(name)
 
 	return nil
 }
 
+// GetService takes a database name and return service its LoadBalancer endpoint
 func GetService(name string) (endpoint string, err error) {
 	s, err := kube.Services(namespace).Get(name)
 	if err != nil {
@@ -113,12 +112,13 @@ func GetService(name string) (endpoint string, err error) {
 		case len(hostname) != 0:
 			return fmt.Sprintf("http://%s:%d", hostname, port), nil
 		default:
-			return "", fmt.Errorf("failed to find service '%s', name")
+			return "", fmt.Errorf("failed to find service '%s'", name)
 		}
 	}
 	return "", nil
 }
 
+// GetServicesName returns names of all services in the namespace
 func GetServicesName() (names []string) {
 	listOptions := api.ListOptions{
 		TypeMeta: vapi.TypeMeta{
@@ -136,4 +136,25 @@ func GetServicesName() (names []string) {
 		names = append(names, s.Spec.Selector["database"])
 	}
 	return names
+}
+
+// CreateNamespace create namespace if not present
+func CreateNamespace() error {
+	namespaceSpec := &api.Namespace{
+		TypeMeta: vapi.TypeMeta{
+			Kind:       "Namespace",
+			APIVersion: "v1",
+		},
+		ObjectMeta: api.ObjectMeta{
+			Name: namespace,
+		},
+	}
+
+	if _, err := kube.Namespaces().Get(namespace); err != nil {
+		_, err = kube.Namespaces().Create(namespaceSpec)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
