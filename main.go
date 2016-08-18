@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"k8s.io/kubernetes/pkg/client/restclient"
@@ -16,12 +17,13 @@ type Database struct {
 }
 
 var (
-	namespace       = "couchdb"
-	kubeHost        = "104.155.15.42"
-	kubeUser        = "admin"
-	kubePassword    = "wf6invLPq78prAer"
-	couchdbUser     = "admin"
-	couchdbPassword = "admin"
+	namespace         = "couchdb"
+	kubeHost          = "130.211.100.80"
+	kubeUser          = "admin"
+	kubePassword      = "u7M56qMNEWkWZts2"
+	couchdbUser       = "admin"
+	couchdbPassword   = "admin"
+	getServiceTimeout = 15
 
 	kube *client.Client
 )
@@ -47,29 +49,40 @@ func createDatabaseHandler(w http.ResponseWriter, r *http.Request) {
 	// Create new deployemnt
 	err = CreateDeployment(db)
 	if err != nil {
-		log.Fatalf("could not create deployment controller: %s", err)
+		log.Println("could not create deployment controller '%s': %s", *db.Name, err)
 	}
-	log.Println("deployment controller created")
+	log.Printf("deployment controller '%s' created", *db.Name)
 
 	// Create new service
 	err = CreateService(db)
 	if err != nil {
-		log.Fatalf("could not create service: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Could not create database."))
+		log.Printf("could not create service '%s': %s", *db.Name, err)
+		return
 	}
-	log.Println("service created")
-
-	//w.Write([]byte(*db.Name))
-	// return 201 Created
+	log.Printf("service '%s' created", *db.Name)
+	w.WriteHeader(http.StatusCreated)
 }
 
 func getServiceHandler(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
 
-	endpoint, err := GetService(name)
-	if err != nil {
-		// error
+	if _, err := GetService(name); err != nil {
+		w.Write([]byte(err.Error()))
+		return
 	}
-	w.Write([]byte(endpoint))
+	for i := 0; i <= getServiceTimeout; i++ {
+		endpoint, err := GetService(name)
+		if err == nil && len(endpoint) > 0 {
+			w.Write([]byte(endpoint))
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	w.Write([]byte("Pending endpoint assignment..."))
+
 }
 
 func main() {

@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
-	"log"
 
 	"k8s.io/kubernetes/pkg/api"
 	vapi "k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 )
+
+type Service struct {
+	Name     string
+	Endpoint string
+}
 
 func CreateDeployment(db Database) (err error) {
 	name := *db.Name
@@ -84,41 +88,52 @@ func CreateService(db Database) (err error) {
 
 	_, err = kube.Services(namespace).Create(serviceSpec)
 	if err != nil {
-		return fmt.Errorf("failed to create service: %s", err)
+		return fmt.Errorf("failed to create service '%s': %s", name, err)
 	}
-	log.Println("service created")
 
-	GetService(name)
-	// get service - wait for endpoint to be created
-	// create db
-	// setup replication
+	go createDB(name)
 
 	return nil
 }
 
-func GetService(name string) (string, error) {
+func GetService(name string) (endpoint string, err error) {
 	s, err := kube.Services(namespace).Get(name)
 	if err != nil {
-		log.Fatalln("Can't get service:", err)
-		return "", err
+		return "", fmt.Errorf("Database '%s' does not exist", name)
 	}
 
-	var endpoint string
-	for ingress := s.Status.LoadBalancer.Ingress; len(ingress) > 0; {
-
+	ingress := s.Status.LoadBalancer.Ingress
+	if len(ingress) > 0 {
 		ip := ingress[0].IP
 		hostname := ingress[0].Hostname
 		port := s.Spec.Ports[0].Port
-
 		switch {
 		case len(ip) != 0:
-			endpoint = fmt.Sprintf("http://%s:%d", ip, port)
+			return fmt.Sprintf("http://%s:%d", ip, port), nil
 		case len(hostname) != 0:
-			endpoint = fmt.Sprintf("http://%s:%d", hostname, port)
+			return fmt.Sprintf("http://%s:%d", hostname, port), nil
 		default:
-			return "", fmt.Errorf("failed to find service")
+			return "", fmt.Errorf("failed to find service '%s', name")
 		}
 	}
+	return "", nil
+}
 
-	return endpoint, nil
+func GetServicesName() (names []string) {
+	listOptions := api.ListOptions{
+		TypeMeta: vapi.TypeMeta{
+			Kind:       "Service",
+			APIVersion: "v1",
+		},
+	}
+
+	services, err := kube.Services(namespace).List(listOptions)
+	if err != nil {
+		return names
+	}
+
+	for _, s := range services.Items {
+		names = append(names, s.Spec.Selector["database"])
+	}
+	return names
 }
